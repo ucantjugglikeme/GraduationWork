@@ -1,8 +1,16 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESP32Ping.h>
+#include <PubSubClient.h>
 #include <AsyncEventSource.h>
 #include <nlohmann/json.hpp>
 #include <LiquidCrystal.h>
+
+// TODO: Clean code and delete redundant serial prints
+
+// Macro to read build flags
+#define ST(A) #A
+#define STR(A) ST(A)
 
 using json = nlohmann::json;
 
@@ -14,6 +22,8 @@ using json = nlohmann::json;
 #define BUZZER_PIN 9
 
 AsyncWebServer WebServer(80);
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 String WIFI_SSID_CLIENT;
 String WIFI_PASS_CLIENT;
@@ -21,7 +31,19 @@ String HOSTNAME;
 String ADDRESS;
 String WIFI_SSID_SERVER = "gleakactor";
 String WIFI_PASS_SERVER = "gleakactor1";
-String SERVER = "http://server";
+String SERVER = "188.225.58.207";
+int MQTT_PORT = 1883;
+
+const char * MQTT_USER_ = STR(MQTT_USER);
+const char * MQTT_PASSWORD_ = STR(MQTT_PASSWORD);
+
+// TODO: add structure for gas level data (json)
+
+// TODO: set valid topics
+String GAS_TOPIC = "gas-leak-detection/";
+String TEST_TOPIC = "gas-leak-detection/";
+
+// TODO: add json
 
 bool CONNECTION_STATUS = false;
 
@@ -50,6 +72,9 @@ constexpr uint8_t PIN_DB7 = 7;
 constexpr uint8_t PIN_EN = 8;
 
 LiquidCrystal lcd(PIN_RS, PIN_EN, PIN_DB4, PIN_DB5, PIN_DB6, PIN_DB7);
+
+int cooldown = 5000;
+long lastCheck = 0;
 
 void setup_wifi_server() {
   Serial.print("Setting AP (Access Point)…");
@@ -104,6 +129,55 @@ void setup_wifi_client() {
   }
 }
 
+void recievedCallback(char * topic, byte * payload, unsigned int length) {
+  Serial.print("Message received: ");
+  Serial.println(topic);
+
+  // TODO: add response to the topic
+  Serial.print("payload: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+void setup_mqtt_client() {
+  bool available = Ping.ping(SERVER.c_str(), 3);
+
+  if (available) {
+    Serial.println("Server is available");
+  }
+  else {
+    Serial.println("Server is not available");
+  }
+
+  mqttClient.setServer(SERVER.c_str(), MQTT_PORT);
+
+  // TODO: add regex for these
+  // if invalid, then turn to reserved topics smth like "gas-leak-detection/---/---/gas-level"
+  GAS_TOPIC += ADDRESS + "/" + HOSTNAME + "/gas-level";
+  TEST_TOPIC += ADDRESS + "/" + HOSTNAME + "/test";
+
+  mqttClient.setCallback(recievedCallback);
+}
+
+void mqttConnect() {
+  Serial.println("MQTT connecting...");
+  
+  if (mqttClient.connect(HOSTNAME.c_str(), MQTT_USER_, MQTT_PASSWORD_)) {
+    Serial.println("connected");
+
+    mqttClient.subscribe(TEST_TOPIC.c_str());
+  }
+  else {
+    Serial.print("failed, status code = ");
+    Serial.println(mqttClient.state());
+    Serial.println("try again in 5 seconds");
+    
+    delay(5000);
+  }
+}
+
 void not_found(AsyncWebServerRequest * request) {
   request -> send(404, "text/plain", "Not found");
 }
@@ -149,6 +223,7 @@ void network_configure() {
     }
     setup_wifi_client();
   }
+  setup_mqtt_client();
 }
 
 void setup() {
@@ -170,34 +245,43 @@ void setup() {
 }
 
 void loop() {
-  int gasValue = analogRead(MQ2_AO_PIN);
-  int gasLeakage = digitalRead(MQ2_DO_PIN);
-
-  Serial.print("MQ2 sensor AO value: ");
-  Serial.println(gasValue);
-  Serial.print("MQ2 sensor DO value: ");
-  Serial.println(gasLeakage);
-
-  lcd.clear();
-  lcd.setCursor(0, 1);
-  if (gasValue >= THRESHOLD) {
-    lcd.print("Leakage Alert!");
-
-    ledcAttachPin(BUZZER_PIN, 0); // pin, channel
-    ledcWriteNote(0, NOTE_F, 4); // channel, frequency, octave
-    //tone(BUZZER_PIN, BUZZER_FREQUENCY);
-    neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS, 0, 0);
+  if (!mqttClient.connected()) {
+    mqttConnect();
   }
-  else {
+  mqttClient.loop();
+
+  long now = millis();
+  if (now - lastCheck > cooldown) {
+    lastCheck = now;
+
+    // TODO: add json, add publish
+    int gasValue = analogRead(MQ2_AO_PIN);
+    int gasLeakage = digitalRead(MQ2_DO_PIN);
+
+    Serial.print("MQ2 sensor AO value: ");
+    Serial.println(gasValue);
+    Serial.print("MQ2 sensor DO value: ");
+    Serial.println(gasLeakage);
+
     lcd.clear();
+    lcd.setCursor(0, 1);
+    if (gasValue >= THRESHOLD) {
+      lcd.print("Leakage Alert!");
 
-    ledcDetachPin(BUZZER_PIN);
-    //noTone(BUZZER_PIN);
-    neopixelWrite(RGB_BUILTIN, 0, 0, 0);
+      ledcAttachPin(BUZZER_PIN, 0); // pin, channel
+      ledcWriteNote(0, NOTE_F, 4); // channel, frequency, octave
+      //tone(BUZZER_PIN, BUZZER_FREQUENCY);
+      neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS, 0, 0);
+    }
+    else {
+      lcd.clear();
+
+      ledcDetachPin(BUZZER_PIN);
+      //noTone(BUZZER_PIN);
+      neopixelWrite(RGB_BUILTIN, 0, 0, 0);
+    }
+    lcd.setCursor(0, 0);
+    lcd.print("Gas Level: ");
+    lcd.print(gasValue);
   }
-  lcd.setCursor(0, 0);
-  lcd.print("Gas Level: ");
-  lcd.print(gasValue);
-
-  delay(5000);
 }
