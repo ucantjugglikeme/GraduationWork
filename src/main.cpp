@@ -3,6 +3,7 @@
 #include <ESP32Ping.h>
 #include <PubSubClient.h>
 #include <AsyncEventSource.h>
+#include <Regexp.h>
 #include <nlohmann/json.hpp>
 #include <LiquidCrystal.h>
 
@@ -44,6 +45,9 @@ String GAS_TOPIC = "gas-leak-detection/";
 String TEST_TOPIC = "gas-leak-detection/";
 
 // TODO: add json
+// gas-value: int
+// gas-leakage: bool
+// threshold: int
 
 bool CONNECTION_STATUS = false;
 
@@ -153,8 +157,30 @@ void setup_mqtt_client() {
 
   mqttClient.setServer(SERVER.c_str(), MQTT_PORT);
 
+  // ---DONE
   // TODO: add regex for these
   // if invalid, then turn to reserved topics smth like "gas-leak-detection/---/---/gas-level"
+  MatchState msAddress;
+  MatchState msDevice;
+  msAddress.Target(const_cast<char*>(ADDRESS.c_str()));
+  msDevice.Target(const_cast<char*>(HOSTNAME.c_str()));
+  char matchAddress = msAddress.Match("^[0-9a-zA-Z,. -]+$");
+  char matchDevice = msDevice.Match("^[0-9a-zA-Z,. -]+$");
+  if (matchAddress > 0) {
+    Serial.println("Address is valid");
+  }
+  else {
+    Serial.println("Address is not valid");
+    ADDRESS = "---";
+  }
+  if (matchDevice > 0) {
+    Serial.println("Device is valid");
+  }
+  else {
+    Serial.println("Device is not valid");
+    HOSTNAME = "---";
+  }
+
   GAS_TOPIC += ADDRESS + "/" + HOSTNAME + "/gas-level";
   TEST_TOPIC += ADDRESS + "/" + HOSTNAME + "/test";
 
