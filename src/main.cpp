@@ -38,17 +38,18 @@ int MQTT_PORT = 1883;
 const char * MQTT_USER_ = STR(MQTT_USER);
 const char * MQTT_PASSWORD_ = STR(MQTT_PASSWORD);
 
-// TODO: add structure for gas level data (json)
-
 // TODO: set valid topics
 String GAS_TOPIC = "gas-leak-detection/";
 String TEST_TOPIC = "gas-leak-detection/";
 
-// TODO: add json
-// avg-gas-value: int
-// gas-leakage: bool
-// threshold: int
-// cooldown: int
+json data = {
+  {"address", "---"},
+  {"device", "---"},
+  {"avg-gas-value", 0},
+  {"gas-leakage", false},
+  {"threshold", 0},
+  {"cooldown", 0}
+}; 
 
 bool CONNECTION_STATUS = false;
 
@@ -183,7 +184,7 @@ void setup_mqtt_client() {
     HOSTNAME = "---";
   }
 
-  GAS_TOPIC += ADDRESS + "/" + HOSTNAME + "/gas-level";
+  GAS_TOPIC += ADDRESS + "/" + HOSTNAME + "/gas-data";
   TEST_TOPIC += ADDRESS + "/" + HOSTNAME + "/test";
 
   mqttClient.setCallback(recievedCallback);
@@ -289,7 +290,6 @@ void loop() {
   if (now - lastCheck > cooldown) {
     lastCheck = now;
 
-    // TODO: add json, add publish
     count++;
     int avgGasValue = (sum + gasValue) / count;
     Serial.print("Count: ");
@@ -300,10 +300,20 @@ void loop() {
     Serial.println(gasValue);
     sum = 0;
     count = 0;
+    bool leakage = avgGasValue >= THRESHOLD;
+
+    data["address"] = ADDRESS.c_str();
+    data["device"] = HOSTNAME.c_str();
+    data["avg-gas-value"] = avgGasValue;
+    data["gas-leakage"] = leakage;
+    data["threshold"] = THRESHOLD;
+    data["cooldown"] = cooldown;
+
+    mqttClient.publish(GAS_TOPIC.c_str(), data.dump().c_str());
 
     lcd.clear();
     lcd.setCursor(0, 1);
-    if (avgGasValue >= THRESHOLD) {
+    if (leakage) {
       lcd.print("Leakage Alert!");
 
       ledcAttachPin(BUZZER_PIN, 0); // pin, channel
