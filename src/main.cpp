@@ -45,9 +45,10 @@ String GAS_TOPIC = "gas-leak-detection/";
 String TEST_TOPIC = "gas-leak-detection/";
 
 // TODO: add json
-// gas-value: int
+// avg-gas-value: int
 // gas-leakage: bool
 // threshold: int
+// cooldown: int
 
 bool CONNECTION_STATUS = false;
 
@@ -78,7 +79,11 @@ constexpr uint8_t PIN_EN = 8;
 LiquidCrystal lcd(PIN_RS, PIN_EN, PIN_DB4, PIN_DB5, PIN_DB6, PIN_DB7);
 
 int cooldown = 5000;
+int mqttCooldown = 5000;
 long lastCheck = 0;
+long lastAttempt = 0;
+int sum = 0;
+int count = 0;
 
 void setup_wifi_server() {
   Serial.print("Setting AP (Access Point)…");
@@ -157,9 +162,6 @@ void setup_mqtt_client() {
 
   mqttClient.setServer(SERVER.c_str(), MQTT_PORT);
 
-  // ---DONE
-  // TODO: add regex for these
-  // if invalid, then turn to reserved topics smth like "gas-leak-detection/---/---/gas-level"
   MatchState msAddress;
   MatchState msDevice;
   msAddress.Target(const_cast<char*>(ADDRESS.c_str()));
@@ -199,8 +201,6 @@ void mqttConnect() {
     Serial.print("failed, status code = ");
     Serial.println(mqttClient.state());
     Serial.println("try again in 5 seconds");
-    
-    delay(5000);
   }
 }
 
@@ -260,10 +260,10 @@ void setup() {
   lcd.print("IoT Platform!");
 
   Serial.begin(115200);
-  Serial.println("Warming up the MQ2 sensor");
 
   network_configure();
 
+  Serial.println("Warming up the MQ2 sensor");
   delay(20000);  // wait for the MQ2 to warm up
   Serial.println("Warmed up");
 
@@ -271,27 +271,39 @@ void setup() {
 }
 
 void loop() {
-  if (!mqttClient.connected()) {
+  long now = millis();
+
+  if (!mqttClient.connected() && (lastAttempt == 0 || now - lastAttempt > mqttCooldown)) {
+    lastAttempt = now;
     mqttConnect();
   }
   mqttClient.loop();
 
-  long now = millis();
+  int gasValue = analogRead(MQ2_AO_PIN);
+  int gasLeakage = digitalRead(MQ2_DO_PIN);
+
+  // TODO: think about why first attempt gets 51 while next gets 50
+  if (lastCheck == 0) {
+    lastCheck = now;
+  }
   if (now - lastCheck > cooldown) {
     lastCheck = now;
 
     // TODO: add json, add publish
-    int gasValue = analogRead(MQ2_AO_PIN);
-    int gasLeakage = digitalRead(MQ2_DO_PIN);
-
-    Serial.print("MQ2 sensor AO value: ");
+    count++;
+    int avgGasValue = (sum + gasValue) / count;
+    Serial.print("Count: ");
+    Serial.println(count);
+    Serial.print("Average MQ2 sensor value: ");
+    Serial.println(avgGasValue);
+    Serial.print("Current MQ2 sensor value: ");
     Serial.println(gasValue);
-    Serial.print("MQ2 sensor DO value: ");
-    Serial.println(gasLeakage);
+    sum = 0;
+    count = 0;
 
     lcd.clear();
     lcd.setCursor(0, 1);
-    if (gasValue >= THRESHOLD) {
+    if (avgGasValue >= THRESHOLD) {
       lcd.print("Leakage Alert!");
 
       ledcAttachPin(BUZZER_PIN, 0); // pin, channel
@@ -308,6 +320,12 @@ void loop() {
     }
     lcd.setCursor(0, 0);
     lcd.print("Gas Level: ");
-    lcd.print(gasValue);
+    lcd.print(avgGasValue);
   }
+  else {
+    sum += gasValue;
+    count++;
+  }
+
+  delay(100);
 }
